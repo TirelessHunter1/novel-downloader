@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from novel_downloader.core.parsers.base import BaseParser
+from novel_downloader.core.parsers.registry import register_parser
 from novel_downloader.models import ChapterDict, ParserConfig
+from novel_downloader.utils import find_cookie_value
 from novel_downloader.utils.constants import DATA_DIR
-from novel_downloader.utils.cookies import find_cookie_value
 
 from .book_info_parser import parse_book_info
 from .chapter_router import parse_chapter
@@ -27,6 +28,10 @@ if TYPE_CHECKING:
     from novel_downloader.utils.fontocr import FontOCR
 
 
+@register_parser(
+    site_keys=["qidian", "qd"],
+    backends=["session", "browser"],
+)
 class QidianParser(BaseParser):
     """
     Parser for Qidian site.
@@ -47,11 +52,10 @@ class QidianParser(BaseParser):
         # Extract and store parser flags from config
         self._use_truncation = config.use_truncation
         self._decode_font: bool = config.decode_font
-        self._save_font_debug: bool = config.save_font_debug
 
         self._fixed_font_dir: Path = self._base_cache_dir / "fixed_fonts"
         self._fixed_font_dir.mkdir(parents=True, exist_ok=True)
-        self._font_debug_dir: Path | None = None
+        self._debug_dir: Path = Path.cwd() / "debug"
 
         state_files = [
             DATA_DIR / "qidian" / "browser_state.cookies",
@@ -80,8 +84,6 @@ class QidianParser(BaseParser):
                     vec_weight=config.vec_weight,
                     font_debug=config.save_font_debug,
                 )
-                self._font_debug_dir = self._base_cache_dir / "qidian" / "font_debug"
-                self._font_debug_dir.mkdir(parents=True, exist_ok=True)
 
     def parse_book_info(
         self,
@@ -121,19 +123,6 @@ class QidianParser(BaseParser):
         """
         return is_encrypted(html_str)
 
-    def _init_cache_folders(self) -> None:
-        """
-        Prepare cache folders for plain/encrypted HTML and font debug data.
-        Folders are only created if corresponding debug/save flags are enabled.
-        """
-        base = self._base_cache_dir
-
-        # Font debug folder
-        if self._save_font_debug and self.book_id:
-            self._font_debug_dir = base / self.book_id / "font_debug"
-            self._font_debug_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            self._font_debug_dir = None
-
-    def _on_book_id_set(self) -> None:
-        self._init_cache_folders()
+    @property
+    def save_font_debug(self) -> bool:
+        return self._config.save_font_debug

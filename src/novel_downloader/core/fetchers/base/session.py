@@ -21,12 +21,14 @@ from aiohttp import ClientResponse, ClientSession, ClientTimeout, TCPConnector
 
 from novel_downloader.core.interfaces import FetcherProtocol
 from novel_downloader.models import FetcherConfig, LoginField
+from novel_downloader.utils import (
+    async_sleep_with_random_delay,
+    parse_cookie_expires,
+)
 from novel_downloader.utils.constants import (
     DATA_DIR,
     DEFAULT_USER_HEADERS,
 )
-from novel_downloader.utils.cookies import parse_cookie_expires
-from novel_downloader.utils.time_utils import async_sleep_with_random_delay
 
 from .rate_limiter import TokenBucketRateLimiter
 
@@ -156,7 +158,12 @@ class BaseSession(FetcherProtocol, abc.ABC):
             await self._session.close()
         self._session = None
 
-    async def fetch(self, url: str, **kwargs: Any) -> str:
+    async def fetch(
+        self,
+        url: str,
+        encoding: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         """
         Fetch the content from the given URL asynchronously, with retry support.
 
@@ -172,8 +179,7 @@ class BaseSession(FetcherProtocol, abc.ABC):
             try:
                 async with self.session.get(url, **kwargs) as resp:
                     resp.raise_for_status()
-                    text: str = await resp.text()
-                    return text
+                    return await self._response_to_str(resp, encoding)
             except aiohttp.ClientError:
                 if attempt < self.retry_times:
                     await async_sleep_with_random_delay(
@@ -404,6 +410,25 @@ class BaseSession(FetcherProtocol, abc.ABC):
         if self._session:
             return dict(self._session.headers)
         return self._headers.copy()
+
+    @staticmethod
+    async def _response_to_str(
+        resp: ClientResponse,
+        encoding: str | None = None,
+    ) -> str:
+        """
+        Read the full body of resp as text. First try the declared charset,
+        then on UnicodeDecodeError fall back to a lenient utf-8 decode.
+        """
+        data: bytes = await resp.read()
+        encodings = [encoding, resp.charset, "utf-8", "gb18030", "gbk"]
+        encodings_list: list[str] = [e for e in encodings if e]
+        for enc in encodings_list:
+            try:
+                return data.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return data.decode("utf-8", errors="ignore")
 
     async def __aenter__(self) -> Self:
         if self._session is None or self._session.closed:

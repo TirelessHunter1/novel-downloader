@@ -3,23 +3,19 @@
 novel_downloader.core.exporters.common.txt
 ------------------------------------------
 
-Contains the logic for exporting novel content as a single `.txt` file.
-
-This module defines `common_save_as_txt` function, which assembles and formats
-a novel based on metadata and chapter files found in the raw data directory.
-It is intended to be used by `CommonExporter` as part of the save/export process.
+Defines `common_export_as_txt` to assemble and export a novel
+into a single `.txt` file. Intended for use by `CommonExporter`.
 """
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
-from novel_downloader.utils.file_utils import save_as_txt
-from novel_downloader.utils.text_utils import (
-    clean_chapter_title,
-    format_chapter,
+from novel_downloader.core.exporters.txt_util import (
+    build_txt_chapter,
+    build_txt_header,
 )
+from novel_downloader.utils import get_cleaner, save_as_txt
 
 if TYPE_CHECKING:
     from .main_exporter import CommonExporter
@@ -30,102 +26,105 @@ def common_export_as_txt(
     book_id: str,
 ) -> None:
     """
-    将 save_path 文件夹中该小说的所有章节 json 文件合并保存为一个完整的 txt 文件,
-    并保存到 out_path 下
+    Export a novel as a single text file by merging all chapter data.
 
-    处理流程:
-      1. 从 book_info.json 中加载书籍信息 (包含书名、作者、简介及卷章节列表)
-      2. 遍历各卷, 每个卷先追加卷标题, 然后依次追加该卷下各章节的标题和内容
-      3. 将书籍元信息 (书名、作者、原文截至、内容简介) 与所有章节内容拼接
-      4. 将最终结果保存到 out_path 下 (例如：`{book_name}.txt`)
+    Steps:
+      1. Load book metadata (title, author, summary, word count, update time,
+         volumes, and chapters).
+      2. For each volume:
+         a. Append the volume title.
+         b. Batch-fetch all chapters in that volume to minimize SQLite calls.
+         c. Append each chapter's title, content, and optional author note.
+      3. Build a header with book metadata and the latest chapter title.
+      4. Concatenate header and all chapter contents.
+      5. Save the resulting .txt file to the output directory
+         (e.g., '{book_name}.txt').
 
-    :param book_id: Identifier of the novel (used as subdirectory name).
+    :param exporter: The CommonExporter instance managing paths and config.
+    :param book_id: Identifier of the novel (subdirectory under raw data).
     """
     TAG = "[Exporter]"
     # --- Paths & options ---
-    raw_base = exporter._raw_data_dir / book_id
     out_dir = exporter.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    cleaner = get_cleaner(
+        enabled=exporter._config.clean_text,
+        config=exporter._config.cleaner_cfg,
+    )
 
     # --- Load book_info.json ---
-    info_path = raw_base / "book_info.json"
-    try:
-        info_text = info_path.read_text(encoding="utf-8")
-        book_info = json.loads(info_text)
-    except Exception as e:
-        exporter.logger.error("%s Failed to load %s: %s", TAG, info_path, e)
+    book_info = exporter._load_book_info(book_id)
+    if not book_info:
         return
 
     # --- Compile chapters ---
     parts: list[str] = []
-    latest_chapter: str = ""
-    volumes = book_info.get("volumes", [])
+    latest_chapter_title: str = ""
 
-    for vol in volumes:
-        vol_name = vol.get("volume_name", "").strip()
-        vol_name = clean_chapter_title(vol_name)
+    for vol in book_info.get("volumes", []):
+        vol_name = cleaner.clean_title(vol.get("volume_name", ""))
         if vol_name:
-            volume_header = f"\n\n{'=' * 6} {vol_name} {'=' * 6}\n\n"
-            parts.append(volume_header)
+            # e.g. "\n\n====== 第三卷 ======\n\n"
+            parts.append(f"\n\n{'=' * 6} {vol_name} {'=' * 6}\n\n")
             exporter.logger.info("%s Processing volume: %s", TAG, vol_name)
-        for chap in vol.get("chapters", []):
-            chap_id = chap.get("chapterId")
-            chap_title = chap.get("title", "")
+
+        # Batch-fetch chapters for this volume
+        chap_ids = [
+            chap.get("chapterId")
+            for chap in vol.get("chapters", [])
+            if chap.get("chapterId")
+        ]
+        chap_map = exporter._get_chapters(book_id, chap_ids)
+
+        for chap_meta in vol.get("chapters", []):
+            chap_id = chap_meta.get("chapterId")
             if not chap_id:
-                exporter.logger.warning("%s Missing chapterId, skipping: %s", TAG, chap)
+                exporter.logger.warning(
+                    "%s Missing chapterId, skipping: %s", TAG, chap_meta
+                )
                 continue
 
-            chapter_data = exporter._get_chapter(book_id, chap_id)
-            if not chapter_data:
+            chap_title = cleaner.clean_title(chap_meta.get("title", ""))
+            data = chap_map.get(chap_id)
+            if not data:
                 exporter.logger.info(
-                    "%s Missing chapter file in: %s (%s), skipping.",
+                    "%s Missing chapter: %s (%s), skipping.",
                     TAG,
                     chap_title,
                     chap_id,
                 )
                 continue
 
-            # Extract structured fields
-            title = chapter_data.get("title", chap_title).strip()
-            content = chapter_data.get("content", "").strip()
-            author_say = chapter_data.get("author_say", "").strip()
-            clean_title = clean_chapter_title(title)
+            # Extract and clean fields
+            title = cleaner.clean_title(data.get("title", chap_title))
+            content = cleaner.clean_content(data.get("content", ""))
+            extra = data.get("extra", {})
+            author_note = cleaner.clean_content(extra.get("author_say", ""))
 
-            parts.append(format_chapter(clean_title, content, author_say))
-            latest_chapter = clean_title
+            extras = {"作者说": author_note} if author_note else {}
+            parts.append(
+                build_txt_chapter(title=title, paragraphs=content, extras=extras)
+            )
+
+            latest_chapter_title = title
 
     # --- Build header ---
-    name = book_info.get("book_name")
-    author = book_info.get("author")
-    words = book_info.get("word_count")
-    updated = book_info.get("update_time")
-    summary = book_info.get("summary")
+    name = book_info.get("book_name") or ""
+    author = book_info.get("author") or ""
+    words = book_info.get("word_count") or ""
+    updated = book_info.get("update_time") or ""
+    summary = book_info.get("summary") or ""
 
-    header_lines = []
+    header_fields = [
+        ("书名", name),
+        ("作者", author),
+        ("总字数", words),
+        ("更新日期", updated),
+        ("原文截至", latest_chapter_title),
+        ("内容简介", summary),
+    ]
 
-    if name:
-        header_lines.append(f"书名: {name}")
-
-    if author:
-        header_lines.append(f"作者: {author}")
-
-    if words:
-        header_lines.append(f"总字数: {words}")
-
-    if updated:
-        header_lines.append(f"更新日期: {updated}")
-
-    header_lines.append(f"原文截至: {latest_chapter}")
-
-    if summary:
-        header_lines.append("内容简介:")
-        header_lines.append(summary)
-
-    header_lines.append("")
-    header_lines.append("-" * 10)
-    header_lines.append("")
-
-    header = "\n".join(header_lines)
+    header = build_txt_header(header_fields)
 
     final_text = header + "\n\n" + "\n\n".join(parts).strip()
 
@@ -134,9 +133,9 @@ def common_export_as_txt(
     out_path = out_dir / out_name
 
     # --- Save final text ---
-    try:
-        save_as_txt(content=final_text, filepath=out_path)
+    result = save_as_txt(content=final_text, filepath=out_path)
+    if result:
         exporter.logger.info("%s Novel saved to: %s", TAG, out_path)
-    except Exception as e:
-        exporter.logger.error("%s Failed to save file: %s", TAG, e)
+    else:
+        exporter.logger.error("%s Failed to write novel to %s", TAG, out_path)
     return

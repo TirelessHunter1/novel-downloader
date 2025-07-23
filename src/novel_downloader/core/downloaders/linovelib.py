@@ -6,6 +6,7 @@ novel_downloader.core.downloaders.linovelib
 """
 
 from novel_downloader.core.downloaders.common import CommonDownloader
+from novel_downloader.core.downloaders.registry import register_downloader
 from novel_downloader.core.interfaces import (
     FetcherProtocol,
     ParserProtocol,
@@ -13,8 +14,11 @@ from novel_downloader.core.interfaces import (
 from novel_downloader.models import DownloaderConfig
 
 
+@register_downloader(site_keys=["linovelib"])
 class LinovelibDownloader(CommonDownloader):
-    """"""
+    """
+    Downloader for Linovelib (哔哩轻小说) novels.
+    """
 
     def __init__(
         self,

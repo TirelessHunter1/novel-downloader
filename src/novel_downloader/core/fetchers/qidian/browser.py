@@ -11,15 +11,21 @@ from typing import Any
 from playwright.async_api import Page
 
 from novel_downloader.core.fetchers.base import BaseBrowser
+from novel_downloader.core.fetchers.registry import register_fetcher
 from novel_downloader.models import FetcherConfig, LoginField
 from novel_downloader.utils.i18n import t
 
 
+@register_fetcher(
+    site_keys=["qidian", "qd"],
+    backends=["browser"],
+)
 class QidianBrowser(BaseBrowser):
     """
     A browser class for interacting with the Qidian (www.qidian.com) novel website.
     """
 
+    WAIT_TIME = 2.0
     HOMEPAGE_URL = "https://www.qidian.com/"
     BOOKCASE_URL = "https://my.qidian.com/bookcase/"
     # BOOK_INFO_URL = "https://book.qidian.com/info/{book_id}/"
@@ -59,7 +65,7 @@ class QidianBrowser(BaseBrowser):
         :return: The page content as a string.
         """
         url = self.book_info_url(book_id=book_id)
-        return [await self.fetch(url, **kwargs)]
+        return [await self.fetch(url, delay=self.WAIT_TIME, **kwargs)]
 
     async def get_book_chapter(
         self,
@@ -76,7 +82,9 @@ class QidianBrowser(BaseBrowser):
         """
         catalog_url = self.book_info_url(book_id=book_id)
         url = self.chapter_url(book_id=book_id, chapter_id=chapter_id)
-        return [await self.fetch(url, referer=catalog_url, **kwargs)]
+        return [
+            await self.fetch(url, referer=catalog_url, delay=self.WAIT_TIME, **kwargs)
+        ]
 
     async def get_bookcase(
         self,
@@ -88,7 +96,7 @@ class QidianBrowser(BaseBrowser):
         :return: The HTML markup of the bookcase page.
         """
         url = self.bookcase_url()
-        return [await self.fetch(url, **kwargs)]
+        return [await self.fetch(url, delay=self.WAIT_TIME, **kwargs)]
 
     async def get_homepage(
         self,
@@ -100,7 +108,7 @@ class QidianBrowser(BaseBrowser):
         :return: The HTML markup of the home page.
         """
         url = self.homepage_url()
-        return [await self.fetch(url, **kwargs)]
+        return [await self.fetch(url, delay=self.WAIT_TIME, **kwargs)]
 
     async def set_interactive_mode(self, enable: bool) -> bool:
         """

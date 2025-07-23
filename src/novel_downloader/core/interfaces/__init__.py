@@ -14,14 +14,16 @@ Included protocols:
 - ExporterProtocol
 """
 
-from .downloader import DownloaderProtocol
-from .exporter import ExporterProtocol
-from .fetcher import FetcherProtocol
-from .parser import ParserProtocol
-
 __all__ = [
     "DownloaderProtocol",
     "ExporterProtocol",
     "FetcherProtocol",
     "ParserProtocol",
+    "SearcherProtocol",
 ]
+
+from .downloader import DownloaderProtocol
+from .exporter import ExporterProtocol
+from .fetcher import FetcherProtocol
+from .parser import ParserProtocol
+from .searcher import SearcherProtocol

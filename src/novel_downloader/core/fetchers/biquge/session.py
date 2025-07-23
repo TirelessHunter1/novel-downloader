@@ -8,9 +8,14 @@ novel_downloader.core.fetchers.biquge.session
 from typing import Any
 
 from novel_downloader.core.fetchers.base import BaseSession
+from novel_downloader.core.fetchers.registry import register_fetcher
 from novel_downloader.models import FetcherConfig
 
 
+@register_fetcher(
+    site_keys=["biquge", "bqg"],
+    backends=["session"],
+)
 class BiqugeSession(BaseSession):
     """
     A session class for interacting with the Biquge (www.b520.cc) novel website.
@@ -55,7 +60,7 @@ class BiqugeSession(BaseSession):
         :return: The chapter content as a string.
         """
         url = self.chapter_url(book_id=book_id, chapter_id=chapter_id)
-        return [await self.fetch(url, **kwargs)]
+        return [await self.fetch(url, encoding="gbk", **kwargs)]
 
     @classmethod
     def book_info_url(cls, book_id: str) -> str:
